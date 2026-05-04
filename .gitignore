@@ -1,1 +1,8 @@
 venv/
+logs/
+data/
+__pycache__/
+*.pyc
+*.pcap
+*.csv
+*.log
