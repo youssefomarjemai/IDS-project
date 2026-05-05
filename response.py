@@ -11,17 +11,20 @@ from fpdf import FPDF
 from datetime import datetime
 
 # ─────────────────────────────────────────
-# CONFIGURATION — edit these
+# CONFIGURATION
 # ─────────────────────────────────────────
-EMAIL_SENDER = "jemaiyoussef93@gmail.com"
-EMAIL_PASSWORD = "ejhu jozm gmfy crvh"
-EMAIL_RECEIVER = "jemaiyoussef93@gmail.com"
-MAX_ALERTS_BEFORE_BLOCK = 5  # block IP after this many attack detections
+EMAIL_SENDER = "youremail@gmail.com"
+EMAIL_PASSWORD = "your_16_char_app_password"
+EMAIL_RECEIVER = "youremail@gmail.com"
+MAX_ALERTS_BEFORE_BLOCK = 10     # block after 10 detections
+MIN_ALERTS_BEFORE_EMAIL = 5      # only email after 5 alerts from same IP
+EMAIL_COOLDOWN_MINUTES = 10      # wait 10 min before sending another email
+MIN_BYTES_TO_ALERT = 500         # ignore packets smaller than 500 bytes
 # ─────────────────────────────────────────
 
 blocked_ips = set()
 ip_alert_count = {}
-
+last_email_time = {}             # tracks when last email was sent per IP
 # ─────────────────────────────────────────
 # 1. DESKTOP NOTIFICATION
 # ─────────────────────────────────────────
@@ -209,21 +212,41 @@ def generate_report(src_ip, dst_ip, protocol, src_bytes, timestamp):
 # called from detect.py for every attack
 # ─────────────────────────────────────────
 def handle_attack(src_ip, dst_ip, protocol, src_bytes, timestamp):
-    print(f"\n[RESPONSE] Handling attack from {src_ip}...")
 
-    # Track how many times this IP was flagged
+    # ── Filter 1: ignore small packets (games, background apps)
+    if src_bytes < MIN_BYTES_TO_ALERT:
+        print(f"[FILTER] Packet too small ({src_bytes} bytes) — skipping response")
+        return
+
+    # ── Filter 2: ignore local network IPs
+    if src_ip.startswith('192.168') or src_ip.startswith('10.') or src_ip.startswith('127.'):
+        print(f"[FILTER] Local IP {src_ip} — skipping response")
+        return
+
+    # ── Count alerts per IP
     ip_alert_count[src_ip] = ip_alert_count.get(src_ip, 0) + 1
     count = ip_alert_count[src_ip]
 
-    # Always send desktop notification
-    # send_desktop_notification(src_ip, protocol, src_bytes)
+    print(f"\n[RESPONSE] Attack from {src_ip} — flagged {count} times")
 
-    # Send email on first detection
-    if count == 1:
+    # ── Always send desktop notification (but only every 5 detections)
+    if count % 5 == 1:
+        send_desktop_notification(src_ip, protocol, src_bytes)
+
+    # ── Send email only after MIN_ALERTS_BEFORE_EMAIL and respect cooldown
+    now = datetime.now()
+    last_sent = last_email_time.get(src_ip)
+    cooldown_passed = (
+        last_sent is None or
+        (now - last_sent).seconds / 60 >= EMAIL_COOLDOWN_MINUTES
+    )
+
+    if count >= MIN_ALERTS_BEFORE_EMAIL and cooldown_passed:
         send_email_alert(src_ip, dst_ip, protocol, src_bytes, timestamp)
         generate_report(src_ip, dst_ip, protocol, src_bytes, timestamp)
+        last_email_time[src_ip] = now
 
-    # Block IP after MAX_ALERTS_BEFORE_BLOCK detections
+    # ── Block IP only after MAX_ALERTS_BEFORE_BLOCK
     if count >= MAX_ALERTS_BEFORE_BLOCK:
-        print(f"[RESPONSE] IP {src_ip} flagged {count} times — blocking!")
+        print(f"[RESPONSE] Blocking {src_ip} after {count} detections")
         block_ip(src_ip)
