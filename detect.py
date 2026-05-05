@@ -4,7 +4,7 @@ from scapy.all import sniff, IP, TCP, UDP, ICMP
 from datetime import datetime
 import sqlite3
 import os
-
+from response import handle_attack
 # Load the trained model and encoders
 print("Loading model...")
 model = joblib.load('models/ids_model.pkl')
@@ -152,7 +152,9 @@ def analyze_packet(packet):
     # Display result
     status = "⚠️  ATTACK" if prediction == 'attack' else "✅ NORMAL"
     print(f"[{timestamp}] {status} | {protocol} | {src_ip} → {dst_ip} | Bytes: {src_bytes}")
-
+    # Trigger automatic response for attacks
+    if prediction == 'attack':
+        handle_attack(src_ip, dst_ip, protocol, src_bytes, timestamp)
     # Save to database
     save_alert(timestamp, src_ip, dst_ip, protocol, src_port, dst_port, prediction, src_bytes)
 
@@ -161,5 +163,5 @@ setup_database()
 print("\nStarting real-time detection... Press Ctrl+C to stop\n")
 print(f"{'Time':<10} {'Status':<15} {'Protocol':<8} {'Source':<20} {'Destination':<20} {'Bytes'}")
 print("-" * 85)
-sniff(prn=analyze_packet, store=False, count=30)
+sniff(prn=analyze_packet, store=False)
 print("\nDetection complete! Alerts saved to logs/alerts.db")
